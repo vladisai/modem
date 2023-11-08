@@ -11,6 +11,7 @@ import torch.nn.functional as F
 import glob
 from PIL import Image
 from pathlib import Path
+from termcolor import colored
 from torch import distributions as pyd
 from torch.distributions.utils import _standard_normal
 
@@ -126,6 +127,7 @@ class R3MMultiFrame(torch.nn.Module):
         if self.freeze:
             for param in self.encoder.parameters():
                 param.requires_grad_(False)
+            self.encoder.eval()
         outdim = unwrap_model(self.encoder).outdim
         self.resizer = nn.Linear(outdim, latent_dim)
 
@@ -150,7 +152,6 @@ def build_enc(cfg):
     elif cfg.enc_type == "r3m":
         print("Loading R3M encoder...")
         encoder = R3MMultiFrame(cfg.latent_dim, freeze=True, arch="resnet50")
-        encoder.eval()
         return encoder
 
 
