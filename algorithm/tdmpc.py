@@ -16,7 +16,7 @@ class TOLD(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
-        self._encoder = h.enc(cfg)
+        self._encoder = h.build_enc(cfg)
         self._state_encoder = nn.ModuleList(h.state_enc(cfg))
         self._dynamics = h.mlp(
             cfg.latent_dim + cfg.action_dim, cfg.mlp_dim, cfg.latent_dim

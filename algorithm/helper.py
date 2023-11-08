@@ -14,6 +14,8 @@ from pathlib import Path
 from torch import distributions as pyd
 from torch.distributions.utils import _standard_normal
 
+import r3m
+
 
 __REDUCE__ = lambda b: "mean" if b else "none"
 
@@ -108,6 +110,50 @@ class Flatten(nn.Module):
         return x.view(x.size(0), -1)
 
 
+def unwrap_model(model):
+    """Remove the DistributedDataParallel wrapper if present."""
+    wrapped = isinstance(
+        model, torch.nn.parallel.distributed.DistributedDataParallel
+    ) or isinstance(model, torch.nn.DataParallel)
+    return model.module if wrapped else model
+
+
+class R3MMultiFrame(torch.nn.Module):
+    def __init__(self, latent_dim, freeze=True, arch="resnet50"):
+        super().__init__()
+        self.encoder = r3m.load_r3m(arch)
+        self.freeze = freeze
+        if self.freeze:
+            for param in self.encoder.parameters():
+                param.requires_grad_(False)
+        outdim = unwrap_model(self.encoder).outdim
+        self.resizer = nn.Linear(outdim, latent_dim)
+
+    def forward(self, x):
+        # x: (B, T, C, H, W)
+        # To deal with time, we just flatten the time dimension with batch,
+        # then unflatten it after the encoder, and take the mean over T.
+        B, TC, H, W = x.shape
+        T = TC // 3
+        C = 3
+        x = x.reshape(B * T, C, H, W)
+        x = self.encoder(x)
+        x = x.reshape(B, T, -1)
+        x = x.mean(dim=1)
+        x = self.resizer(x)
+        return x
+
+
+def build_enc(cfg):
+    if cfg.enc_type == "told":
+        return enc(cfg)
+    elif cfg.enc_type == "r3m":
+        print("Loading R3M encoder...")
+        encoder = R3MMultiFrame(cfg.latent_dim, freeze=True, arch="resnet50")
+        encoder.eval()
+        return encoder
+
+
 def enc(cfg):
     """Returns our MoDem encoder that takes a stack of 224x224 frames as input."""
     C = int(3 * cfg.frame_stack)
@@ -183,8 +229,14 @@ class RandomShiftsAug(nn.Module):
         self.pad = int(
             cfg.img_size / 21
         )  # maintain same padding ratio as in original implementation
+        if cfg.disable_aug:
+            self.disable_aug = True
+        else:
+            self.disable_aug = False
 
     def forward(self, x):
+        if self.disable_aug:
+            return x
         n, _, h, w = x.size()
         assert h == w
         padding = tuple([self.pad] * 4)
